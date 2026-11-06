@@ -100,7 +100,6 @@ jobs:
       - name: Regressions pass with the fix
         run: |
           cmake --build build --target test_slot_geometry test_mooncake_release -j 2
-          ctest --test-dir build -R '^(test_slot_geometry|test_mooncake_release)        run: ctest --test-dir build --output-on-failure
- -V
+          ctest --test-dir build -R '^(test_slot_geometry|test_mooncake_release)$' -V
       - name: Test
         run: ctest --test-dir build --output-on-failure
