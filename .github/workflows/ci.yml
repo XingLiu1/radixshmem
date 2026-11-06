@@ -50,10 +50,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install system packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config \
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 install -y build-essential pkg-config \
             libibverbs-dev libxxhash-dev libzmq3-dev
       - uses: actions/setup-python@v5
         with:
@@ -63,7 +65,7 @@ jobs:
           go-version-file: src/registry/etcd_go/go.mod
           cache-dependency-path: src/registry/etcd_go/go.sum
       - name: Install Python build deps
-        run: pip install pybind11==3.1.0 numpy "grpcio>=1.60" setuptools pytest
+        run: pip install cmake==3.31.6 pybind11==3.1.0 numpy "grpcio>=1.60" setuptools pytest
       - name: Configure
         run: |
           cmake -S . -B build \
@@ -76,5 +78,29 @@ jobs:
         run: cmake --build build -j "$(nproc)"
       - name: Install Python package
         run: pip install --no-build-isolation -e python
+      - name: Regressions fail against the original release implementations
+        run: |
+          cp src/transfer/slot_transfer.cpp /tmp/slot-transfer-fixed.cpp
+          cp src/transfer/mooncake/mooncake_backend.cpp /tmp/mooncake-backend-fixed.cpp
+          git show 19e80154e32898bab88b7ea9dd2d60ee290ead21:src/transfer/slot_transfer.cpp > src/transfer/slot_transfer.cpp
+          git show 19e80154e32898bab88b7ea9dd2d60ee290ead21:src/transfer/mooncake/mooncake_backend.cpp > src/transfer/mooncake/mooncake_backend.cpp
+          cmake --build build --target test_slot_geometry test_mooncake_release -j 2
+          python - <<'PY'
+          import resource, subprocess
+          resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+          for name, marker in [('test_slot_geometry', 'detach_peer("peerK") == XFER_EBUSY'), ('test_mooncake_release', 'backend->poll(h, &bytes)')]:
+              r = subprocess.run(['build/bin/' + name], capture_output=True, text=True)
+              print(name, 'base exit:', r.returncode, flush=True)
+              print(r.stdout + r.stderr, flush=True)
+              assert r.returncode == -6 and marker in r.stderr, (name, r.returncode)
+          PY
+          mv /tmp/slot-transfer-fixed.cpp src/transfer/slot_transfer.cpp
+          mv /tmp/mooncake-backend-fixed.cpp src/transfer/mooncake/mooncake_backend.cpp
+          git diff --exit-code -- src/transfer
+      - name: Regressions pass with the fix
+        run: |
+          cmake --build build --target test_slot_geometry test_mooncake_release -j 2
+          ctest --test-dir build -R '^(test_slot_geometry|test_mooncake_release)        run: ctest --test-dir build --output-on-failure
+ -V
       - name: Test
         run: ctest --test-dir build --output-on-failure
