@@ -97,6 +97,7 @@ jobs:
           mv /tmp/slot-transfer-fixed.cpp src/transfer/slot_transfer.cpp
           mv /tmp/mooncake-backend-fixed.cpp src/transfer/mooncake/mooncake_backend.cpp
           git diff --exit-code -- src/transfer
+          touch src/transfer/slot_transfer.cpp src/transfer/mooncake/mooncake_backend.cpp
       - name: Regressions pass with the fix
         run: |
           cmake --build build --target test_slot_geometry test_mooncake_release -j 2
