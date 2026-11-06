@@ -52,8 +52,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install system packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config \
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 install -y build-essential pkg-config \
             libibverbs-dev libxxhash-dev libzmq3-dev
       - uses: actions/setup-python@v5
         with:
@@ -63,7 +63,7 @@ jobs:
           go-version-file: src/registry/etcd_go/go.mod
           cache-dependency-path: src/registry/etcd_go/go.sum
       - name: Install Python build deps
-        run: pip install pybind11==3.1.0 numpy "grpcio>=1.60" setuptools pytest
+        run: pip install cmake==3.31.6 pybind11==3.1.0 numpy "grpcio>=1.60" setuptools pytest
       - name: Configure
         run: |
           cmake -S . -B build \
@@ -76,5 +76,20 @@ jobs:
         run: cmake --build build -j "$(nproc)"
       - name: Install Python package
         run: pip install --no-build-isolation -e python
+      - name: Timeout regression fails on the unmodified base
+        run: |
+          cp python/radixshmem/server.py /tmp/radix-server-fixed.py
+          git show 19e80154e32898bab88b7ea9dd2d60ee290ead21:python/radixshmem/server.py > python/radixshmem/server.py
+          set +e
+          PYTHONPATH=python python -m pytest -q python/tests/test_server_rpc.py -k test_timed_out_pull_keeps_pins_slots_and_budget_until_release > /tmp/timeout-base.log 2>&1
+          rc=$?
+          set -e
+          mv /tmp/radix-server-fixed.py python/radixshmem/server.py
+          cat /tmp/timeout-base.log
+          test "$rc" -eq 1
+          python -c 'from pathlib import Path; s=Path("/tmp/timeout-base.log").read_text(); assert "4 failed" in s and "DID NOT RAISE" in s'
+          git diff --exit-code -- python/radixshmem/server.py
+      - name: Timeout regression passes with the fix
+        run: PYTHONPATH=python python -m pytest -v python/tests/test_server_rpc.py -k test_timed_out_pull_keeps_pins_slots_and_budget_until_release
       - name: Test
         run: ctest --test-dir build --output-on-failure
